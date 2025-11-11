@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "Stock": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "warehouse_id": { "type": "string" },
+          "location": { "type": "string" },
+          "quantity": { "type": "integer" },
+          "product_id": { "type": "string" },
+          "product_name": { "type": "string" },
+          "brand": { "type": "string" },
+          "supplier": { "type": "string" }
+        }
+      }
+    }
+  }
+}

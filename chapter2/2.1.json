@@ -1,0 +1,64 @@
+{
+  "_id": "P12345",
+  "name": "Wireless Noise-Cancelling Headphones",
+  "brand": "SoundWave",
+  "description": "Over-ear Bluetooth headphones with active noise cancellation and 30-hour battery life.",
+  "image_url": "https://example.com/images/headphones.jpg",
+
+  "price": {
+    "amount": 179.99,
+    "currency": "EUR",
+    "vat_rate": 0.20
+  },
+
+  "categories": [
+    {
+      "category_id": "C100",
+      "title": "Electronics"
+    },
+    {
+      "category_id": "C110",
+      "title": "Audio"
+    }
+  ],
+
+  "supplier": {
+    "supplier_id": "S900",
+    "name": "SoundWave Distribution Ltd.",
+    "SIRET": "12345678900011",
+    "headOffice": "25 Rue de la Musique, 75010 Paris, France",
+    "revenue": 3500000
+  },
+
+  "stock": [
+    {
+      "warehouse_id": "W10",
+      "location": "Warehouse Paris North",
+      "quantity": 120
+    },
+    {
+      "warehouse_id": "W20",
+      "location": "Warehouse Lyon East",
+      "quantity": 80
+    }
+  ],
+
+  "orders": [
+    {
+      "order_date": "2025-11-07",
+      "delivery_date": "2025-11-10",
+      "quantity": 2,
+      "comment": "Fast shipping requested",
+      "grade": 5,
+      "client": {
+        "client_id": "CL102",
+        "ln": "Dupont",
+        "fn": "Marie",
+        "address": "10 Rue de Rivoli, 75001 Paris, France",
+        "nationality": "French",
+        "birthDate": "1990-05-21",
+        "email": "marie.dupont@example.com"
+      }
+    }
+  ]
+}
