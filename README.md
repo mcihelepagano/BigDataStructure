@@ -5,17 +5,16 @@ It was developed for the **Big Data Structure** course at ESILV to explore data 
 ---
 
 ## 2. Package Overview
-The package `dvl_analyzer` is composed of modular files, each performing a distinct function for schema parsing, size computation, or sharding analysis.  
-The modular design allows for reusability and testing with different JSON Schemas.
+`dvl_analyzer` parses JSON Schemas into Python objects, computes sizes, and produces sharding stats. It understands nested objects/arrays (e.g., categories in products, embedded stock/order lines) and accepts average array cardinalities from stats.
 
 ###  Structure
 | File | Description |
 |------|--------------|
-| **models.py** | Defines data structures (`Field`, `Collection`, `Database`). |
-| **schema_parser.py** | Parses JSON Schemas and constructs Python objects. |
-| **size_calculator.py** | Implements all document and collection size computation logic. |
+| **models.py** | Data structures (`Field`, `Collection`, `Database`). Arrays carry an `avg_items` hint. |
+| **schema_parser.py** | Recursively parses schemas (objects/arrays) with optional array hints. |
+| **size_calculator.py** | Implements all document and collection size computation logic, including nested objects/arrays. |
 | **sharding_analyzer.py** | Computes document and key distribution across servers. |
-| **examples/** | Contains test schemas and scripts for validation. |
+| **examples/** | Schemas for DB1–DB5, stats files, runnable script. |
 
 ---
 
@@ -35,11 +34,13 @@ Each field contributes its **base value size** plus an **overhead of 12 bytes** 
 | Overhead | +12 bytes per key-value or array element |
 
 ### Computation Steps
-1. **Field size:** `field_size = base_value_size + 12`
-2. **Document size:** sum of all field sizes
-3. **Collection size:** `doc_size × number_of_documents`
-4. **Database size:** sum of all collection sizes
-5. **Conversion:** `1 GB = 1,073,741,824 bytes`
+1. **Field size (scalar):** `field_size = base_value_size + 12`
+2. **Object field:** `12 + sum(child_field_sizes)`
+3. **Array field:** `12 + avg_items × element_size` (avg_items comes from stats or defaults to 1)
+4. **Document size:** sum of all field sizes
+5. **Collection size:** `doc_size × number_of_documents`
+6. **Database size:** sum of all collection sizes
+7. **Conversion:** `1 GB = 1,073,741,824 bytes`
 
 ### Example
 A **Product** document contains 6 fields:  
@@ -124,24 +125,23 @@ This provides a **reproducible and extendable framework** for evaluating the imp
 
 ## Example Execution
 
-Run the test example from your project root:
+Run the analyzer from your project root (defaults: DB1 schema + `stats_full.json`):
 ```bash
 py -m examples.test_script
 ```
 
-Example output:
+Pick other denormalizations:
+```bash
+py -m examples.test_script --schema examples/schema_DB2.json --stats examples/stats_full.json
+py -m examples.test_script --schema examples/schema_DB4.json --stats examples/stats_full.json
+py -m examples.test_script --schema examples/schema_DB5.json --stats examples/stats_full.json
 ```
-=== Document and Collection Sizes ===
-Product    :   712 B/doc | 0.066 GB total
-Stock      :   388 B/doc | 7.23 GB total
-Warehouse  :   204 B/doc | 0.000 GB total
-OrderLine  :   592 B/doc | 2205.372 GB total
-Client     :   584 B/doc | 5.439 GB total
 
-=== Sharding Examples ===
-Stock by Product ID: {'docs_per_server': 20000.0, 'distinct_keys_per_server': 100.0}
-OrderLine by Client ID: {'docs_per_server': 4000000.0, 'distinct_keys_per_server': 10000.0}
-Product by Brand: {'docs_per_server': 100.0, 'distinct_keys_per_server': 5.0}
-```
+The script prints per-collection doc size, collection size, total DB size, and sharding stats for the required keys:
+- St-#IDP, St-#IDW
+- OL-#IDC, OL-#IDP
+- Prod-#IDP, Prod-#brand
+
+`examples/stats_full.json` carries collection counts, distinct counts (products, warehouses, clients, brands), array hints (avg categories per product, etc.), and server count (default 1,000).
 
 ---

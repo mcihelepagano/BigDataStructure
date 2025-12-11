@@ -1,0 +1,54 @@
+DB1
+
+#QUERY1
+identify the filter keys: IDP and IDW
+
+identify sharding key: First we have sharding key IDP and then IDW. 
+Sharding key: IDP
+
+Filter keys: IDP & IDW
+
+We know IDP ⇒ we know exactly which shard holds that warehouse.
+
+vol_network_q = S * size_query + res_q * size_msg
+
+S=1 because the sharding key is also the filter of the query
+
+res_q = how many documents come back?
+
+one (IDP, IDW) pair exactly One stock Doc
+
+res_q = 1
+
+Compute size query:
+
+
+#look at the query
+SELECT S.quantity, S.location
+FROM Stock S
+WHERE S.IDP = $IDP AND S.IDW = $IDW;
+
+
+#starting to compute
+We need to consider S.quantity, S.location, S.IDP, S.IDW because they appear in the SELECT and the WHERE
+All integers but location:
+3x 12(key/value Pair) + 8 (integer size) =  20 x 3  = 60B
+1x 12 + 80(string size) = 92B
+TOT = 60 + 92 = 152B 
+
+What's the expected output? A single document with quantity and location (92+20 ) 112B
+VOL = 1*152B + 1*112B = 264B
+
+BANDWIDTH =  100 mb/s
+RAM  = 25 GB/S
+
+time = VOL / BANDWIDTH
+
+#convert in GB
+vol_GB = VOL/1024^3
+
+#we compute carbon footprint
+CO2_net = vol_GB * 0.011
+
+#compute cost
+price_net = vol_GB * 0.011 euro

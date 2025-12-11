@@ -2,13 +2,16 @@
   "type": "object",
   "properties": {
 
-    "Stock": {
+    "OrderLine": {
       "type": "object",
       "properties": {
-        "IDP":      { "type": "string" },
-        "IDW":      { "type": "string" },
-        "quantity": { "type": "integer" },
-        "location": { "type": "string" },
+        "IDP":         { "type": "string" },
+        "IDC":         { "type": "string" },
+        "date":        { "type": "string", "format": "date" },
+        "deliveryDate":{ "type": "string", "format": "date" },
+        "quantity":    { "type": "integer" },
+        "comment":     { "type": "string" },
+        "grade":       { "type": "integer" },
 
         "product": {
           "type": "object",
@@ -53,7 +56,18 @@
       }
     },
 
-    
+    "Stock": {
+      "type": "object",
+      "properties": {
+        "IDP":      { "type": "string" },
+        "IDW":      { "type": "string" },
+        "quantity": { "type": "integer" },
+        "location": { "type": "string" }
+      },
+      "required": ["IDP", "IDW", "quantity", "location"]
+    },
+
+
     "Warehouse": {
       "type": "object",
       "properties": {
@@ -63,23 +77,6 @@
       },
       "required": ["IDW", "address", "capacity"]
     },
-
-
-    "OrderLine": {
-      "type": "object",
-      "properties": {
-        "IDP":          { "type": "string" },
-        "IDC":          { "type": "string" },
-        "date":         { "type": "string", "format": "date" },
-        "deliveryDate": { "type": "string", "format": "date" },
-        "quantity":     { "type": "integer" },
-        "comment":      { "type": "string" },
-        "grade":        { "type": "integer" }
-      },
-      "required": ["IDP", "IDC", "date", "deliveryDate", "quantity", "comment", "grade"]
-    },
-
-
     "Client": {
       "type": "object",
       "properties": {
