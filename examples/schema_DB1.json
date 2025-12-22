@@ -10,15 +10,15 @@
         "IDP":        { "type": "integer" },
         "name":       { "type": "string" },
         "brand":      { "type": "string" },
-        "description":{ "type": "string" },
+        "description":{ "type": "string", "format": "longstring" },
         "image_url":  { "type": "string" },
 
         "price": {
           "type": "object",
           "properties": {
-            "amount":   { "type": "number" },
+            "amount":   { "type": "integer" },
             "currency": { "type": "string" },
-            "vat_rate": { "type": "number" }
+            "vat_rate": { "type": "integer" }
           },
           "required": ["amount", "currency", "vat_rate"]
         },
@@ -41,7 +41,7 @@
             "name":       { "type": "string" },
             "SIRET":      { "type": "string" },
             "headOffice": { "type": "string" },
-            "revenue":    { "type": "number" }
+            "revenue":    { "type": "integer" }
           },
           "required": ["IDS", "name", "SIRET", "headOffice", "revenue"]
         }
@@ -68,7 +68,7 @@
     "Warehouse": {
       "type": "object",
       "properties": {
-        "IDW":      { "type": "string" },
+        "IDW":      { "type": "integer" },
         "address":  { "type": "string" },
         "capacity": { "type": "integer" }
       },
@@ -83,8 +83,8 @@
         "IDC":          { "type": "integer" },
         "date":         { "type": "string", "format": "date" },
         "deliveryDate": { "type": "string", "format": "date" },
-        "quantity":     { "type": "integer" },
-        "comment":      { "type": "string" },
+        "quantity":     { "type": "integer"},
+        "comment":      { "type": "string","format": "longstring" },
         "grade":        { "type": "integer" }
       },
       "required": ["IDP", "IDC", "date", "deliveryDate", "quantity", "comment", "grade"]

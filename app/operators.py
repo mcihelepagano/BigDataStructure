@@ -1,9 +1,9 @@
 # app/operators.py
 
 from typing import List, Dict, Optional
-from .operator_costs import filter_cost_professor, CostOutput
 from .models import Collection
-from .size_calculator import TYPE_SIZES, OVERHEAD
+from .operator_costs import operator_cost_excel, CostOutput
+from .size_calculator import TYPE_SIZES
 
 
 # ============================================================
@@ -12,8 +12,7 @@ from .size_calculator import TYPE_SIZES, OVERHEAD
 
 def field_type_from_schema(coll: Collection, name: str) -> str:
     """
-    Extract primitive type for field from schema Collection.
-    Raise error if field is missing or not primitive.
+    Extract primitive type for a field from schema Collection.
     """
     for f in coll.fields:
         if f.name == name and f.field_type in TYPE_SIZES:
@@ -23,14 +22,14 @@ def field_type_from_schema(coll: Collection, name: str) -> str:
 
 def resolve_field_types(coll: Collection, fields: List[str]) -> List[str]:
     """
-    Given a list of SELECT/WHERE field names, return their primitive types.
+    Resolve a list of field names into primitive types.
     """
-    return [field_type_from_schema(coll, name) for name in fields]
+    return [field_type_from_schema(coll, f) for f in fields]
 
 
 def default_selectivity(filter_key: str, distinct_values: Dict[str, int]) -> float:
     """
-    Default selectivity = 1 / Ndistinct(filter_key).
+    Default selectivity = 1 / distinct(filter_key)
     """
     if filter_key in distinct_values and distinct_values[filter_key] > 0:
         return 1.0 / distinct_values[filter_key]
@@ -39,7 +38,7 @@ def default_selectivity(filter_key: str, distinct_values: Dict[str, int]) -> flo
 
 def detect_primary_key_result(filter_keys: List[str], pk_fields: Optional[List[str]]) -> bool:
     """
-    Returns True if the filter includes the entire PK.
+    True if filter keys include the full primary key.
     """
     if not pk_fields:
         return False
@@ -60,30 +59,42 @@ def filter_without_sharding(
     pk_fields: Optional[List[str]] = None
 ) -> CostOutput:
 
-    # Determine result cardinality
+    # -------------------------
+    # Result cardinality
+    # -------------------------
     if detect_primary_key_result(filter_keys, pk_fields):
         result_docs = 1
+        sel = 1.0 / coll.doc_count
     else:
-        if selectivity is None:
-            selectivity = default_selectivity(filter_keys[0], distinct_values)
-        result_docs = coll.doc_count * selectivity
+        sel = selectivity or default_selectivity(filter_keys[0], distinct_values)
+        result_docs = coll.doc_count * sel
 
-    # Determine types of involved fields
+    # -------------------------
+    # Field types
+    # -------------------------
     query_fields = list(set(filter_keys + select_fields))
     query_types = resolve_field_types(coll, query_fields)
     result_types = resolve_field_types(coll, select_fields)
+    filter_types     = resolve_field_types(coll, filter_keys)
+    projection_types = resolve_field_types(coll, select_fields)
 
-    # Compute cost (S = servers)
-    c = filter_cost_professor(
+    # -------------------------
+    # Local docs per server
+    # -------------------------
+    local_docs = coll.doc_count / servers
+
+    # -------------------------
+    # Cost computation (Excel model)
+    # -------------------------
+    return operator_cost_excel(
         s=servers,
         result_docs=result_docs,
-        query_field_types=query_types,
-        result_field_types=result_types,
+        filter_types=filter_types,
+        projection_types=projection_types,
+        local_docs=local_docs,
+        selectivity=sel,
+        doc_size=coll.doc_size
     )
-
-    # Store output size
-    c.total_result_size = result_docs * c.size_msg
-    return c
 
 
 # ============================================================
@@ -101,89 +112,91 @@ def filter_with_sharding(
     pk_fields: Optional[List[str]] = None
 ) -> CostOutput:
 
-    # Determine number of servers involved
+    # -------------------------
+    # Servers involved
+    # -------------------------
     S = 1 if sharding_key in filter_keys else servers
 
-    # Determine result cardinality
+    # -------------------------
+    # Result cardinality
+    # -------------------------
     if detect_primary_key_result(filter_keys, pk_fields):
         result_docs = 1
+        sel = 1.0 / coll.doc_count
     else:
-        if selectivity is None:
-            selectivity = default_selectivity(filter_keys[0], distinct_values)
-        result_docs = coll.doc_count * selectivity
+        sel = selectivity or default_selectivity(filter_keys[0], distinct_values)
+        result_docs = coll.doc_count * sel
 
-    # Resolve types
-    query_fields = list(set(filter_keys + select_fields))
-    query_types = resolve_field_types(coll, query_fields)
-    result_types = resolve_field_types(coll, select_fields)
+    # -------------------------
+    # Field types
+    # -------------------------
+    filter_types     = resolve_field_types(coll, filter_keys)
+    projection_types = resolve_field_types(coll, select_fields)
 
-    # Compute cost
-    c = filter_cost_professor(
-        s=S,
-        result_docs=result_docs,
-        query_field_types=query_types,
-        result_field_types=result_types,
-    )
 
-    c.total_result_size = result_docs * c.size_msg
-    return c
+    # -------------------------
+    # Local docs per server
+    # -------------------------
+    local_docs = coll.doc_count / servers
+
+    # -------------------------
+    # Cost computation (Excel model)
+    # -------------------------
+    return operator_cost_excel(
+    s=S,
+    result_docs=result_docs,
+    filter_types=filter_types,
+    projection_types=projection_types,
+    local_docs=local_docs,
+    selectivity=sel,
+    doc_size=coll.doc_size
+)
+
 
 
 # ============================================================
-# NESTED LOOP WITHOUT SHARDING
+# NESTED LOOP JOIN — WITHOUT SHARDING
 # ============================================================
 
 def nested_loop_without_sharding(
     left: Collection,
     right: Collection,
     join_key: str,
-    distinct_values: Dict[str, int]
+    distinct_values: Dict[str, int],
+    servers: int = 1
 ) -> Dict:
-    """
-    Generic nested loop join with no sharding.
-    """
-    # Cardinality estimate
-    ndist = distinct_values.get(join_key, None)
-    if ndist and ndist > 0:
+
+    ndist = distinct_values.get(join_key)
+    if ndist:
         result_docs = (left.doc_count * right.doc_count) / ndist
     else:
         result_docs = 0.1 * left.doc_count * right.doc_count
 
-    # Document sizes
-    left_doc_size = sum(OVERHEAD + TYPE_SIZES[f.field_type] for f in left.fields if f.field_type in TYPE_SIZES)
-    right_doc_size = sum(OVERHEAD + TYPE_SIZES[f.field_type] for f in right.fields if f.field_type in TYPE_SIZES)
+    left_scan = left.doc_count * left.doc_size
+    right_scan = right.doc_count * right.doc_size
 
-    size_msg = left_doc_size + right_doc_size
+    ram_volume = left_scan + right_scan + result_docs * (left.doc_size + right.doc_size)
 
-    # Smaller relation moved in network
-    left_bytes = left.doc_count * left_doc_size
-    right_bytes = right.doc_count * right_doc_size
-    smaller = min(left_bytes, right_bytes)
-
-    vol_network = smaller + result_docs * size_msg
-
-    # Compute time/cost parameters like filter
     from .operator_costs import BANDWIDTH_Bps, RAM_Bps, CO2_RATE, PRICE_RATE, bytes_to_gb
-    time_network = vol_network / BANDWIDTH_Bps
-    time_cpu = vol_network / RAM_Bps
-    time_total = time_network + time_cpu
 
-    vol_gb = bytes_to_gb(vol_network)
-    co2 = vol_gb * CO2_RATE
-    price = vol_gb * PRICE_RATE
+    time_network = 0
+    time_ram = ram_volume / RAM_Bps
+    time_total = time_ram
+
+    ram_gb = bytes_to_gb(ram_volume)
 
     return {
         "result_docs": result_docs,
-        "size_msg": size_msg,
-        "vol_network": vol_network,
+        "vol_network": 0,
+        "ram_volume": ram_volume,
         "time_total": time_total,
-        "co2": co2,
-        "price": price
+        "co2": ram_gb * CO2_RATE,
+        "price": ram_gb * PRICE_RATE
     }
 
 
 # ============================================================
-# NESTED LOOP WITH SHARDING
+# NESTED LOOP JOIN — WITH SHARDING
 # ============================================================
 
 def nested_loop_with_sharding(
@@ -193,39 +206,32 @@ def nested_loop_with_sharding(
     distinct_values: Dict[str, int],
     servers: int
 ) -> Dict:
-    """
-    Join with perfect sharding alignment: no data movement except result.
-    """
 
-    # Cardinality
-    ndist = distinct_values.get(join_key, None)
+    ndist = distinct_values.get(join_key)
     if ndist:
         result_docs = (left.doc_count * right.doc_count) / ndist
     else:
         result_docs = 0.1 * left.doc_count * right.doc_count
 
-    # Document sizes
-    left_doc_size = sum(OVERHEAD + TYPE_SIZES[f.field_type] for f in left.fields if f.field_type in TYPE_SIZES)
-    right_doc_size = sum(OVERHEAD + TYPE_SIZES[f.field_type] for f in right.fields if f.field_type in TYPE_SIZES)
+    local_left = left.doc_count / servers
+    local_right = right.doc_count / servers
 
-    size_msg = left_doc_size + right_doc_size
-    vol_network = result_docs * size_msg
+    ram_volume = (
+        servers *
+        (local_left * left.doc_size + local_right * right.doc_size)
+        + result_docs * (left.doc_size + right.doc_size)
+    )
 
-    # Compute cost
-    from .operator_costs import BANDWIDTH_Bps, RAM_Bps, CO2_RATE, PRICE_RATE, bytes_to_gb
-    time_network = vol_network / BANDWIDTH_Bps
-    time_cpu = vol_network / RAM_Bps
-    time_total = time_network + time_cpu
+    from .operator_costs import RAM_Bps, CO2_RATE, PRICE_RATE, bytes_to_gb
 
-    vol_gb = bytes_to_gb(vol_network)
-    co2 = vol_gb * CO2_RATE
-    price = vol_gb * PRICE_RATE
+    time_ram = ram_volume / RAM_Bps
+    ram_gb = bytes_to_gb(ram_volume)
 
     return {
         "result_docs": result_docs,
-        "size_msg": size_msg,
-        "vol_network": vol_network,
-        "time_total": time_total,
-        "co2": co2,
-        "price": price
+        "vol_network": 0,
+        "ram_volume": ram_volume,
+        "time_total": time_ram,
+        "co2": ram_gb * CO2_RATE,
+        "price": ram_gb * PRICE_RATE
     }

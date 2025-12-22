@@ -35,7 +35,10 @@ def value_size(field):
 
 def key_count(field):
     """
-    Count HOW MANY KEYS contribute overhead.
+    Count JSON keys contributing overhead:
+    - primitive: 1 key
+    - object: 1 for the object + child keys
+    - array: 1 for the array (keys are NOT repeated for elements!)
     """
     # primitive
     if field.field_type in TYPE_SIZES:
@@ -47,10 +50,10 @@ def key_count(field):
 
     # array
     if field.field_type == "array":
-        item = field.subfields[0]
-        return 1 + field.avg_items * key_count(item)
+        return 1     # arrays DO NOT multiply keys of elements
 
     return 1
+
 
 
 def doc_size(collection):
@@ -72,4 +75,4 @@ def db_size(database):
 
 
 def bytes_to_gb(nbytes):
-    return nbytes / (1024 ** 3)
+    return nbytes / (10 ** 9)

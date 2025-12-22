@@ -19,7 +19,6 @@ def load_stats(stats_path):
             data.get("array_hints", {}),
             data.get("servers", 1000),
         )
-    # backward compatible: old stats.json had only doc counts
     return data, {}, {}, 1000
 
 
@@ -45,19 +44,17 @@ def print_sharding(doc_counts, distinct, servers):
     ol_docs = doc_counts.get("OrderLine", 0)
     prod_docs = doc_counts.get("Product", 0)
 
-    # correct keys (matching professor’s notation)
     prod_count  = distinct.get("IDP", 100000)
     wh_count    = distinct.get("IDW", 200)
     client_count = distinct.get("IDC", 10000000)
     brand_count = distinct.get("brand", 5000)
 
     print(row("St-#IDP",   st_docs, prod_count))
-    print(row("St-#IDW",   st_docs, wh_count))      # special-case handled in sharding_stats if needed
+    print(row("St-#IDW",   st_docs, wh_count))
     print(row("OL-#IDC",   ol_docs, client_count))
     print(row("OL-#IDP",   ol_docs, prod_count))
     print(row("Prod-#IDP", prod_docs, prod_count))
     print(row("Prod-#brand", prod_docs, brand_count))
-
 
 
 def main():
@@ -67,9 +64,14 @@ def main():
     args = parser.parse_args()
 
     doc_counts, distinct, array_hints, servers = load_stats(args.stats)
-    collections = parse_schema(args.schema, doc_counts, array_hints)
+
+    db = parse_schema(args.schema, doc_counts, array_hints)
+    collections = db.collections
+
     print(f"Schema: {args.schema}")
+    print(f"Database name: {db.name}")
     print(f"Stats : {args.stats}")
+
     print_sizes(collections)
     print("DEBUG DOC COUNTS:", doc_counts)
 

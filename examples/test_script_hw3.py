@@ -28,7 +28,8 @@ def load_environment(schema_name="schema_DB1.json", stats_name="stats_full.json"
     with open(stats_path) as f:
         stats = json.load(f)
 
-    collections = parse_schema(schema_path, stats["doc_counts"], stats.get("array_hints", {}))
+    db = parse_schema(schema_path, stats["doc_counts"], stats.get("array_hints", {}))
+    collections = db.collections   # <-- unpack the Database
 
     return collections, stats
 
@@ -60,12 +61,12 @@ def show_sharding(stats):
     servers = stats["servers"]
 
     table = [
-        ("St-#IDP",  dc["Stock"],     dv["IDP"]),
-        ("St-#IDW",  dc["Stock"],     dv["IDW"]),
-        ("OL-#IDC",  dc["OrderLine"], dv["IDC"]),
-        ("OL-#IDP",  dc["OrderLine"], dv["IDP"]),
-        ("Prod-#IDP",dc["Product"],   dv["IDP"]),
-        ("Prod-#brand",dc["Product"], dv["brand"]),
+        ("St-#IDP",      dc["Stock"],     dv["IDP"]),
+        ("St-#IDW",      dc["Stock"],     dv["IDW"]),
+        ("OL-#IDC",      dc["OrderLine"], dv["IDC"]),
+        ("OL-#IDP",      dc["OrderLine"], dv["IDP"]),
+        ("Prod-#IDP",    dc["Product"],   dv["IDP"]),
+        ("Prod-#brand",  dc["Product"],   dv["brand"]),
     ]
 
     for label, total_docs, distinct in table:
@@ -98,8 +99,7 @@ def run_operator_tests(collections, stats):
         sharding_key="IDP",
         distinct_values=distinct,
         servers=servers,
-        pk_fields=["IDP", "IDW"]
-
+        pk_fields=["IDP", "IDW"],
     )
 
     print(f"size_query   = {q1.size_query} B")
