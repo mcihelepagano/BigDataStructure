@@ -10,21 +10,69 @@ from .size_calculator import TYPE_SIZES
 # HELPERS
 # ============================================================
 
+def _find_field(fields, name: str) -> Optional['Field']:
+    """
+    Recursively search for a field by name (could be object/array/primitive).
+    """
+    for f in fields:
+        if f.name == name:
+            return f
+        if f.field_type == "object":
+            nested = _find_field(f.subfields, name)
+            if nested:
+                return nested
+        if f.field_type == "array" and f.subfields:
+            nested = _find_field(f.subfields, name)
+            if nested:
+                return nested
+    return None
+
+
+def _collect_primitive_types(field: 'Field') -> List[str]:
+    """
+    Return all primitive types contained in the given field.
+    - primitive: singleton list
+    - object: recurse into subfields
+    - array: recurse into item definition
+    """
+    if field.field_type in TYPE_SIZES:
+        return [field.field_type]
+    if field.field_type == "object":
+        types: List[str] = []
+        for sub in field.subfields:
+            types.extend(_collect_primitive_types(sub))
+        return types
+    if field.field_type == "array" and field.subfields:
+        return _collect_primitive_types(field.subfields[0])
+    raise ValueError(f"Field '{field.name}' is unsupported for type resolution.")
+
+
 def field_type_from_schema(coll: Collection, name: str) -> str:
     """
-    Extract primitive type for a field from schema Collection.
+    Extract primitive type for a field from schema Collection (supports nested objects/arrays).
+    If the name refers to an object/array, returns the first primitive type found inside.
     """
-    for f in coll.fields:
-        if f.name == name and f.field_type in TYPE_SIZES:
-            return f.field_type
-    raise ValueError(f"Field '{name}' not found or not primitive in collection '{coll.name}'.")
+    fld = _find_field(coll.fields, name)
+    if not fld:
+        raise ValueError(f"Field '{name}' not found in collection '{coll.name}'.")
+    prims = _collect_primitive_types(fld)
+    if prims:
+        return prims[0]
+    raise ValueError(f"Field '{name}' not primitive in collection '{coll.name}'.")
 
 
 def resolve_field_types(coll: Collection, fields: List[str]) -> List[str]:
     """
     Resolve a list of field names into primitive types.
+    If a name points to an object/array, all contained primitive types are included.
     """
-    return [field_type_from_schema(coll, f) for f in fields]
+    types: List[str] = []
+    for fname in fields:
+        fld = _find_field(coll.fields, fname)
+        if not fld:
+            raise ValueError(f"Field '{fname}' not found in collection '{coll.name}'.")
+        types.extend(_collect_primitive_types(fld))
+    return types
 
 
 def default_selectivity(filter_key: str, distinct_values: Dict[str, int]) -> float:
@@ -56,7 +104,9 @@ def filter_without_sharding(
     distinct_values: Dict[str, int],
     servers: int,
     selectivity: Optional[float] = None,
-    pk_fields: Optional[List[str]] = None
+    pk_fields: Optional[List[str]] = None,
+    servers_working: int = 1,
+    indexes_per_shard: int = 1
 ) -> CostOutput:
 
     # -------------------------
@@ -93,7 +143,10 @@ def filter_without_sharding(
         projection_types=projection_types,
         local_docs=local_docs,
         selectivity=sel,
-        doc_size=coll.doc_size
+        doc_size=coll.doc_size,
+        servers_working=servers_working,
+        servers_total=servers,
+        indexes_per_shard=indexes_per_shard
     )
 
 
@@ -109,7 +162,9 @@ def filter_with_sharding(
     distinct_values: Dict[str, int],
     servers: int,
     selectivity: Optional[float] = None,
-    pk_fields: Optional[List[str]] = None
+    pk_fields: Optional[List[str]] = None,
+    servers_working: int = 1,
+    indexes_per_shard: int = 1
 ) -> CostOutput:
 
     # -------------------------
@@ -143,14 +198,17 @@ def filter_with_sharding(
     # Cost computation (Excel model)
     # -------------------------
     return operator_cost_excel(
-    s=S,
-    result_docs=result_docs,
-    filter_types=filter_types,
-    projection_types=projection_types,
-    local_docs=local_docs,
-    selectivity=sel,
-    doc_size=coll.doc_size
-)
+        s=S,
+        result_docs=result_docs,
+        filter_types=filter_types,
+        projection_types=projection_types,
+        local_docs=local_docs,
+        selectivity=sel,
+        doc_size=coll.doc_size,
+        servers_working=servers_working,
+        servers_total=S,  # shards involved
+        indexes_per_shard=indexes_per_shard
+    )
 
 
 
@@ -177,7 +235,7 @@ def nested_loop_without_sharding(
 
     ram_volume = left_scan + right_scan + result_docs * (left.doc_size + right.doc_size)
 
-    from .operator_costs import BANDWIDTH_Bps, RAM_Bps, CO2_RATE, PRICE_RATE, bytes_to_gb
+    from .operator_costs import RAM_Bps, CO2_RAM_RATE, PRICE_RATE, bytes_to_gb
 
     time_network = 0
     time_ram = ram_volume / RAM_Bps
@@ -190,7 +248,7 @@ def nested_loop_without_sharding(
         "vol_network": 0,
         "ram_volume": ram_volume,
         "time_total": time_total,
-        "co2": ram_gb * CO2_RATE,
+        "co2": ram_gb * CO2_RAM_RATE,
         "price": ram_gb * PRICE_RATE
     }
 
@@ -222,7 +280,7 @@ def nested_loop_with_sharding(
         + result_docs * (left.doc_size + right.doc_size)
     )
 
-    from .operator_costs import RAM_Bps, CO2_RATE, PRICE_RATE, bytes_to_gb
+    from .operator_costs import RAM_Bps, CO2_RAM_RATE, PRICE_RATE, bytes_to_gb
 
     time_ram = ram_volume / RAM_Bps
     ram_gb = bytes_to_gb(ram_volume)
@@ -232,6 +290,6 @@ def nested_loop_with_sharding(
         "vol_network": 0,
         "ram_volume": ram_volume,
         "time_total": time_ram,
-        "co2": ram_gb * CO2_RATE,
+        "co2": ram_gb * CO2_RAM_RATE,
         "price": ram_gb * PRICE_RATE
     }

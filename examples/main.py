@@ -39,7 +39,7 @@ def load_environment(schema="schema_DB1.json", stats="stats_full.json"):
 
 def homework2(collections, stats):
 
-    print("\n=== HOMEWORK 2 — DOCUMENT & COLLECTION SIZES ===")
+    print("\n=== HOMEWORK 2 - DOCUMENT & COLLECTION SIZES ===")
     total_bytes = 0
 
     for name, coll in collections.items():
@@ -50,7 +50,7 @@ def homework2(collections, stats):
 
     print(f"\nTOTAL DB SIZE = {bytes_to_gb(total_bytes):.3f} GB")
 
-    print("\n=== HOMEWORK 2 — SHARDING STATS ===")
+    print("\n=== HOMEWORK 2 - SHARDING STATS ===")
     dc = stats["doc_counts"]
     dv = stats["distinct_values"]
     servers = stats["servers"]
@@ -74,14 +74,14 @@ def homework2(collections, stats):
 # ============================================================
 
 def homework3(collections, stats):
-    print("\n=== HOMEWORK 3 — OPERATOR COSTS ===")
+    print("\n=== HOMEWORK 3 - OPERATOR COSTS ===")
 
     stock = collections["Stock"]
     prod  = collections["Product"]
     distinct = stats["distinct_values"]
     servers  = stats["servers"]
 
-    print("\n>> Q1 — FILTER WITH SHARDING (Stock WHERE IDP,IDW)")
+    print("\n>> Q1 - FILTER WITH SHARDING (Stock WHERE IDP,IDW)")
     q1 = filter_with_sharding(
         coll=stock,
         filter_keys=["IDP", "IDW"],
@@ -92,28 +92,64 @@ def homework3(collections, stats):
         pk_fields=["IDP", "IDW"]
     )
 
-    print(f"Query size  = {q1.size_query} B")
-    print(f"Msg size    = {q1.size_msg} B")
-    print(f"Network vol = {q1.vol_network} B")
-    print(f"Total time  = {q1.time_total:.9f} s")
-    print(f"CO₂         = {q1.co2:.9f} kg")
-    print(f"Price       = {q1.price:.9f} €")
+    print(f"Query size    = {q1.size_query} B")
+    print(f"Msg size      = {q1.size_msg} B")
+    print(f"Result docs   = {q1.result_docs}")
+    print(f"Result size   = {q1.result_size_bytes} B")
+    print(f"Network vol   = {q1.vol_network} B")
+    print(f"RAM volume    = {q1.ram_volume} B (per working shard + output)")
+    print(f"RAM total     = {q1.ram_volume_total} B (servers working = 1, total shards = {servers})")
+    print(f"Total time    = {q1.time_total:.9f} s")
+    print(f"COŐ           = {q1.co2:.9f} kg")
+    print(f"Price         = {q1.price:.9f} EUR")
 
 
-    print("\n>> Q2 — FILTER WITHOUT SHARDING (Product WHERE brand)")
+    print("\n>> Q2 - FILTER WITHOUT SHARDING (Product WHERE brand)")
+    # Assumption: brand = "Apple" returns 50 products across the full collection.
+    apple_selectivity = 50 / prod.doc_count if prod.doc_count else 0
+    apple_servers_working = 50
     q2 = filter_without_sharding(
         coll=prod,
         filter_keys=["brand"],
-        select_fields=["IDP", "name", "brand"],
+        select_fields=["IDP", "name", "amount"],
         distinct_values=distinct,
-        servers=servers
+        servers=servers,
+        selectivity=apple_selectivity,
+        servers_working=apple_servers_working
     )
-    print(f"Query size  = {q2.size_query} B")
-    print(f"Msg size    = {q2.size_msg} B")
-    print(f"Network vol = {q2.vol_network} B")
-    print(f"Total time  = {q2.time_total:.9f} s")
-    print(f"CO₂         = {q2.co2:.9f} kg")
-    print(f"Price       = {q2.price:.9f} €")
+    print(f"Query size    = {q2.size_query} B")
+    print(f"Msg size      = {q2.size_msg} B")
+    print(f"Result docs   = {q2.result_docs}")
+    print(f"Result size   = {q2.result_size_bytes} B")
+    print(f"Network vol   = {q2.vol_network} B")
+    print(f"RAM volume    = {q2.ram_volume} B (per working shard + output)")
+    print(f"RAM total     = {q2.ram_volume_total} B (servers working = {apple_servers_working}, total shards = {servers})")
+    print(f"Total time    = {q2.time_total:.9f} s")
+    print(f"COŐ           = {q2.co2:.9f} kg")
+    print(f"Price         = {q2.price:.9f} EUR")
+
+    print("\n>> Q2b - FILTER WITH SHARDING ON BRAND (Product WHERE brand)")
+    # Same Apple scenario, but assume collection sharded on brand (1 shard touched)
+    q2b = filter_with_sharding(
+        coll=prod,
+        filter_keys=["brand"],
+        select_fields=["IDP", "name", "amount"],
+        sharding_key="brand",
+        distinct_values=distinct,
+        servers=servers,
+        selectivity=apple_selectivity,
+        servers_working=1  # only the brand shard works
+    )
+    print(f"Query size    = {q2b.size_query} B")
+    print(f"Msg size      = {q2b.size_msg} B")
+    print(f"Result docs   = {q2b.result_docs}")
+    print(f"Result size   = {q2b.result_size_bytes} B")
+    print(f"Network vol   = {q2b.vol_network} B")
+    print(f"RAM volume    = {q2b.ram_volume} B (per working shard + output)")
+    print(f"RAM total     = {q2b.ram_volume_total} B (servers working = 1, total shards = {servers})")
+    print(f"Total time    = {q2b.time_total:.9f} s")
+    print(f"COŐ           = {q2b.co2:.9f} kg")
+    print(f"Price         = {q2b.price:.9f} EUR")
 
 
 # ============================================================
@@ -121,7 +157,7 @@ def homework3(collections, stats):
 # ============================================================
 
 def homework4(collections, stats):
-    print("\n=== HOMEWORK 4 — NOT IMPLEMENTED YET ===")
+    print("\n=== HOMEWORK 4 - NOT IMPLEMENTED YET ===")
     print("Query optimization, cost plans, estimated best operators... coming soon!")
 
 
@@ -136,10 +172,10 @@ def main():
         print("\n========================")
         print("     HOMEWORK MENU")
         print("========================")
-        print("1 — Homework 2 (Sizes + Sharding)")
-        print("2 — Homework 3 (Operators)")
-        print("3 — Homework 4 (Coming soon)")
-        print("0 — Exit")
+        print("1 - Homework 2 (Sizes + Sharding)")
+        print("2 - Homework 3 (Operators)")
+        print("3 - Homework 4 (Coming soon)")
+        print("0 - Exit")
 
         choice = input("\nChoose an option: ").strip()
 

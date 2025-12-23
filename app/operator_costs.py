@@ -16,7 +16,7 @@ RAM_Bps       = 25 * 1024 * 1024 * 1024  # 25 GB/s
 CO2_NETWORK_RATE = 0.0110  # kg CO2-eq / GB (bandwidth)
 CO2_RAM_RATE     = 0.0280  # kg CO2-eq / GB (RAM/CPU)
 
-PRICE_RATE = 0.011   # ? per GB
+PRICE_RATE = 0.011   # EUR per GB (network volume)
 
 INDEX_SIZE = 1_000_000   # 1 MB, as seen in Excel "local index"
 
@@ -27,11 +27,15 @@ INDEX_SIZE = 1_000_000   # 1 MB, as seen in Excel "local index"
 
 @dataclass
 class CostOutput:
+    result_docs: float           # number of output documents
+    result_size_bytes: float     # total size of output (result_docs * size_msg)
+
     size_query: float
     size_msg: float
     vol_network: float
 
-    ram_volume: float
+    ram_volume: float             # per working shard (ram_local + ram_output split as before)
+    ram_volume_total: float       # total RAM with active + inactive shards
     time_network: float
     time_ram: float
     time_total: float
@@ -94,7 +98,10 @@ def operator_cost_excel(
     projection_types: List[str],
     local_docs: int,            # docs on each server (collection.doc_count / servers)
     selectivity: float,
-    doc_size: int               # document size (HW2)
+    doc_size: int,              # document size (HW2)
+    servers_working: int = 1,   # P: working shards
+    servers_total: int = 1,     # F: total shards
+    indexes_per_shard: int = 1  # K: indexes per shard
 ) -> CostOutput:
 
     # -------------------------
@@ -116,8 +123,8 @@ def operator_cost_excel(
     # -------------------------
     # 3. LOCAL RAM ACCESSED PER SERVER
     #
-    # Excel formula:
-    # RAM_local = max( INDEX_SIZE , local_docs * selectivity * doc_size )
+    # Excel/slide formula (per server):
+    # vol_RAM(q, n) = index(q) + sel(att) * coll_q,n * size_doc(q)
     # -------------------------
     ram_local_scan = local_docs * selectivity * doc_size
     ram_local = max(INDEX_SIZE, ram_local_scan)
@@ -130,19 +137,31 @@ def operator_cost_excel(
     ram_output = result_docs * size_msg
 
     # -------------------------
-    # 5. TOTAL RAM
-    #
-    # RAM_total = ram_output + ram_local * nb_servers_working
-    #
-    # nb_servers_working = s (same as network)
-    # -------------------------
-    ram_volume = ram_output + ram_local * s
+    # 5. TOTAL RAM (piecewise, slide logic)
+    # sh = servers_total, w = servers_working, idx = indexes_per_shard, S = INDEX_SIZE
+    # ptr·doc ~ ram_local_scan (data touched per working shard)
+    # sh = 1:     RAM = idx*S + ptr*doc + ram_output
+    # sh = 1000:  RAM = w*ram_local + (sh-w)*idx*S + ram_output
+    ram_volume = ram_local + ram_output  # per working shard (ram + output)
+    if servers_total == 1:
+        ram_volume_total = (
+            indexes_per_shard * INDEX_SIZE
+            + ram_local_scan
+            + ram_output
+        )
+    else:
+        inactive_shards = max(servers_total - servers_working, 0)
+        ram_volume_total = (
+            servers_working * ram_local
+            + inactive_shards * indexes_per_shard * INDEX_SIZE
+            + ram_output
+        )
 
     # -------------------------
     # 6. TIME
     # -------------------------
     time_network = vol_network / BANDWIDTH_Bps
-    time_ram     = ram_volume   / RAM_Bps
+    time_ram     = ram_volume / RAM_Bps
     time_total   = time_network + time_ram
 
     # -------------------------
@@ -152,20 +171,24 @@ def operator_cost_excel(
     # CO2_RAM     = ram_volume * CO2_RAM_RATE
     # total CO2   = CO2_network + CO2_RAM
     # -------------------------
-    ram_gb = bytes_to_gb(ram_volume)
+    ram_gb = bytes_to_gb(ram_volume_total)
     net_gb = bytes_to_gb(vol_network)
 
     co2_network = net_gb * CO2_NETWORK_RATE
     co2_ram     = ram_gb * CO2_RAM_RATE
     co2         = co2_network + co2_ram
 
-    price  = ram_gb * PRICE_RATE
+    # Price based only on network volume (bytes → GB)
+    price  = bytes_to_gb(vol_network) * PRICE_RATE
 
     return CostOutput(
+        result_docs=result_docs,
+        result_size_bytes=result_docs * size_msg,
         size_query=size_query,
         size_msg=size_msg,
         vol_network=vol_network,
         ram_volume=ram_volume,
+        ram_volume_total=ram_volume_total,
         time_network=time_network,
         time_ram=time_ram,
         time_total=time_total,
