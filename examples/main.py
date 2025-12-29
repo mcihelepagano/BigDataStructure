@@ -153,6 +153,75 @@ def homework3(collections, stats):
 
 
 # ============================================================
+# JOIN QUERIES
+# ============================================================
+
+def joins_section(collections, stats):
+    print("\n=== JOIN QUERIES - NESTED LOOP EXAMPLES ===")
+
+    stock = collections["Stock"]
+    prod  = collections["Product"]
+    distinct = stats["distinct_values"]
+    servers  = stats["servers"]
+
+    print("\n>> J1 - NESTED LOOP JOIN WITHOUT SHARDING (Stock ⋈ Product ON IDP)")
+    j1 = nested_loop_without_sharding(
+        left=stock,
+        right=prod,
+        join_key="IDP",
+        distinct_values=distinct,
+        outer_filter_keys=["IDW"],          # WHERE S.IDW = ?
+        outer_select_fields=["IDP", "quantity"],
+        inner_select_fields=["name"]
+    )
+    print(f"Result docs      = {j1['result_docs']}")
+    print(f"Network vol      = {j1['vol_network']} B")
+    print(f"RAM volume       = {j1['ram_volume']} B")
+    print(f"Total time       = {j1['time_total']:.6f} s")
+    print(f"COO              = {j1['co2']:.6f} kg")
+    print(f"Price            = {j1['price']:.6f} EUR")
+    print("  Outer (Stock):")
+    print(f"    result_docs  = {j1['outer'].result_docs}")
+    print(f"    vol_network  = {j1['outer'].vol_network} B")
+    print(f"    ram_total    = {j1['outer'].ram_volume_total} B")
+    print(f"    time_total   = {j1['outer'].time_total:.6f} s")
+    print("  Inner per iter (Product):")
+    print(f"    result_docs  = {j1['inner_per_iteration'].result_docs}")
+    print(f"    vol_network  = {j1['inner_per_iteration'].vol_network} B")
+    print(f"    ram_total    = {j1['inner_per_iteration'].ram_volume_total} B")
+    print(f"    time_total   = {j1['inner_per_iteration'].time_total:.6f} s")
+
+    print("\n>> J2 - NESTED LOOP JOIN WITH SHARDING (Stock ⋈ Product ON IDP)")
+    j2 = nested_loop_with_sharding(
+        left=stock,
+        right=prod,
+        join_key="IDP",
+        distinct_values=distinct,
+        servers=servers,
+        outer_filter_keys=["IDW"],
+        outer_select_fields=["IDP", "quantity"],
+        inner_select_fields=["name"],
+        sharding_key="IDP"
+    )
+    print(f"Result docs      = {j2['result_docs']}")
+    print(f"Network vol      = {j2['vol_network']} B")
+    print(f"RAM volume       = {j2['ram_volume']} B")
+    print(f"Total time       = {j2['time_total']:.6f} s")
+    print(f"COO              = {j2['co2']:.6f} kg")
+    print(f"Price            = {j2['price']:.6f} EUR")
+    print("  Outer (Stock):")
+    print(f"    result_docs  = {j2['outer'].result_docs}")
+    print(f"    vol_network  = {j2['outer'].vol_network} B")
+    print(f"    ram_total    = {j2['outer'].ram_volume_total} B")
+    print(f"    time_total   = {j2['outer'].time_total:.6f} s")
+    print("  Inner per iter (Product):")
+    print(f"    result_docs  = {j2['inner_per_iteration'].result_docs}")
+    print(f"    vol_network  = {j2['inner_per_iteration'].vol_network} B")
+    print(f"    ram_total    = {j2['inner_per_iteration'].ram_volume_total} B")
+    print(f"    time_total   = {j2['inner_per_iteration'].time_total:.6f} s")
+
+
+# ============================================================
 # PLACEHOLDER FOR HOMEWORK 4
 # ============================================================
 
@@ -174,7 +243,8 @@ def main():
         print("========================")
         print("1 - Homework 2 (Sizes + Sharding)")
         print("2 - Homework 3 (Operators)")
-        print("3 - Homework 4 (Coming soon)")
+        print("3 - Join Queries (Nested Loop)")
+        print("4 - Homework 4 (Coming soon)")
         print("0 - Exit")
 
         choice = input("\nChoose an option: ").strip()
@@ -186,6 +256,9 @@ def main():
             homework3(collections, stats)
 
         elif choice == "3":
+            joins_section(collections, stats)
+
+        elif choice == "4":
             homework4(collections, stats)
 
         elif choice == "0":

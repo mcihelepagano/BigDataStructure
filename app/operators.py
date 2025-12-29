@@ -213,7 +213,7 @@ def filter_with_sharding(
 
 
 # ============================================================
-# NESTED LOOP JOIN — WITHOUT SHARDING
+# NESTED LOOP JOIN (OUTER + INNER COSTING)
 # ============================================================
 
 def nested_loop_without_sharding(
@@ -221,75 +221,164 @@ def nested_loop_without_sharding(
     right: Collection,
     join_key: str,
     distinct_values: Dict[str, int],
+    outer_filter_keys: Optional[List[str]] = None,
+    outer_select_fields: Optional[List[str]] = None,
+    inner_select_fields: Optional[List[str]] = None,
     servers: int = 1
 ) -> Dict:
+    """
+    Compute nested loop costs by splitting outer and inner phases.
+    - Outer: based on left collection and outer_filter_keys/outer_select_fields.
+    - Inner: based on right collection, join_key as filter, and inner_select_fields.
+    Total time = time_outer + time_inner * result_docs (join outputs).
+    Network/RAM/CO2/price are aggregated similarly.
+    """
+    outer_filter_keys = outer_filter_keys or []
+    outer_select_fields = outer_select_fields or []
+    inner_select_fields = inner_select_fields or []
+
+    # Selectivities
+    if outer_filter_keys:
+        outer_sel = default_selectivity(outer_filter_keys[0], distinct_values)
+    else:
+        outer_sel = 1.0
 
     ndist = distinct_values.get(join_key)
+    inner_sel = 1.0 / ndist if ndist else 0.1
+
+    # Outer cardinality and join result cardinality
+    outer_result_docs = left.doc_count * outer_sel
     if ndist:
-        result_docs = (left.doc_count * right.doc_count) / ndist
+        join_result_docs = outer_result_docs * (right.doc_count / ndist)
     else:
-        result_docs = 0.1 * left.doc_count * right.doc_count
+        join_result_docs = 0.1 * outer_result_docs * right.doc_count
 
-    left_scan = left.doc_count * left.doc_size
-    right_scan = right.doc_count * right.doc_size
+    # Outer cost (treated as a filter without sharding)
+    outer_cost = operator_cost_excel(
+        s=servers,
+        result_docs=outer_result_docs,
+        filter_types=resolve_field_types(left, outer_filter_keys) if outer_filter_keys else [],
+        projection_types=resolve_field_types(left, outer_select_fields) if outer_select_fields else [],
+        local_docs=left.doc_count / servers,
+        selectivity=outer_sel,
+        doc_size=left.doc_size,
+        servers_working=servers,
+        servers_total=servers,
+        indexes_per_shard=1
+    )
 
-    ram_volume = left_scan + right_scan + result_docs * (left.doc_size + right.doc_size)
+    # Inner cost per iteration (join key filter, projected inner fields)
+    inner_cost = operator_cost_excel(
+        s=servers,
+        result_docs=1,  # per outer row
+        filter_types=resolve_field_types(right, [join_key]),
+        projection_types=resolve_field_types(right, inner_select_fields) if inner_select_fields else [],
+        local_docs=right.doc_count / servers,
+        selectivity=inner_sel,
+        doc_size=right.doc_size,
+        servers_working=servers,
+        servers_total=servers,
+        indexes_per_shard=1
+    )
 
-    from .operator_costs import RAM_Bps, CO2_RAM_RATE, PRICE_RATE, bytes_to_gb
-
-    time_network = 0
-    time_ram = ram_volume / RAM_Bps
-    time_total = time_ram
-
-    ram_gb = bytes_to_gb(ram_volume)
+    total_vol_network = outer_cost.vol_network + inner_cost.vol_network * join_result_docs
+    total_ram_volume = outer_cost.ram_volume_total + inner_cost.ram_volume_total * join_result_docs
+    total_time = outer_cost.time_total + inner_cost.time_total * join_result_docs
+    total_co2 = (
+        outer_cost.co2 +
+        inner_cost.co2 * join_result_docs
+    )
+    total_price = outer_cost.price + inner_cost.price * join_result_docs
 
     return {
-        "result_docs": result_docs,
-        "vol_network": 0,
-        "ram_volume": ram_volume,
-        "time_total": time_total,
-        "co2": ram_gb * CO2_RAM_RATE,
-        "price": ram_gb * PRICE_RATE
+        "result_docs": join_result_docs,
+        "outer": outer_cost,
+        "inner_per_iteration": inner_cost,
+        "vol_network": total_vol_network,
+        "ram_volume": total_ram_volume,
+        "time_total": total_time,
+        "co2": total_co2,
+        "price": total_price
     }
 
-
-# ============================================================
-# NESTED LOOP JOIN — WITH SHARDING
-# ============================================================
 
 def nested_loop_with_sharding(
     left: Collection,
     right: Collection,
     join_key: str,
     distinct_values: Dict[str, int],
-    servers: int
+    servers: int,
+    outer_filter_keys: Optional[List[str]] = None,
+    outer_select_fields: Optional[List[str]] = None,
+    inner_select_fields: Optional[List[str]] = None,
+    sharding_key: Optional[str] = None
 ) -> Dict:
+    """
+    Sharded nested loop: same outer/inner cost splitting, but assume perfect sharding on join_key
+    so s=1 for both outer and inner.
+    """
+    outer_filter_keys = outer_filter_keys or []
+    outer_select_fields = outer_select_fields or []
+    inner_select_fields = inner_select_fields or []
+
+    if outer_filter_keys:
+        outer_sel = default_selectivity(outer_filter_keys[0], distinct_values)
+    else:
+        outer_sel = 1.0
 
     ndist = distinct_values.get(join_key)
+    inner_sel = 1.0 / ndist if ndist else 0.1
+
+    outer_result_docs = left.doc_count * outer_sel
     if ndist:
-        result_docs = (left.doc_count * right.doc_count) / ndist
+        join_result_docs = outer_result_docs * (right.doc_count / ndist)
     else:
-        result_docs = 0.1 * left.doc_count * right.doc_count
+        join_result_docs = 0.1 * outer_result_docs * right.doc_count
 
-    local_left = left.doc_count / servers
-    local_right = right.doc_count / servers
+    # servers touched based on sharding key (like filter_with_sharding)
+    sharding_matches_outer = sharding_key and outer_filter_keys and sharding_key in outer_filter_keys
+    sharding_matches_join  = sharding_key and sharding_key == join_key
+    S = 1 if (sharding_matches_outer or sharding_matches_join) else servers
 
-    ram_volume = (
-        servers *
-        (local_left * left.doc_size + local_right * right.doc_size)
-        + result_docs * (left.doc_size + right.doc_size)
+    outer_cost = operator_cost_excel(
+        s=S,
+        result_docs=outer_result_docs,
+        filter_types=resolve_field_types(left, outer_filter_keys) if outer_filter_keys else [],
+        projection_types=resolve_field_types(left, outer_select_fields) if outer_select_fields else [],
+        local_docs=left.doc_count / servers,
+        selectivity=outer_sel,
+        doc_size=left.doc_size,
+        servers_working=S,
+        servers_total=S,
+        indexes_per_shard=1
     )
 
-    from .operator_costs import RAM_Bps, CO2_RAM_RATE, PRICE_RATE, bytes_to_gb
+    inner_cost = operator_cost_excel(
+        s=S,
+        result_docs=1,
+        filter_types=resolve_field_types(right, [join_key]),
+        projection_types=resolve_field_types(right, inner_select_fields) if inner_select_fields else [],
+        local_docs=right.doc_count / servers,
+        selectivity=inner_sel,
+        doc_size=right.doc_size,
+        servers_working=S,
+        servers_total=S,
+        indexes_per_shard=1
+    )
 
-    time_ram = ram_volume / RAM_Bps
-    ram_gb = bytes_to_gb(ram_volume)
+    total_vol_network = outer_cost.vol_network + inner_cost.vol_network * join_result_docs
+    total_ram_volume = outer_cost.ram_volume_total + inner_cost.ram_volume_total * join_result_docs
+    total_time = outer_cost.time_total + inner_cost.time_total * join_result_docs
+    total_co2 = outer_cost.co2 + inner_cost.co2 * join_result_docs
+    total_price = outer_cost.price + inner_cost.price * join_result_docs
 
     return {
-        "result_docs": result_docs,
-        "vol_network": 0,
-        "ram_volume": ram_volume,
-        "time_total": time_ram,
-        "co2": ram_gb * CO2_RAM_RATE,
-        "price": ram_gb * PRICE_RATE
+        "result_docs": join_result_docs,
+        "outer": outer_cost,
+        "inner_per_iteration": inner_cost,
+        "vol_network": total_vol_network,
+        "ram_volume": total_ram_volume,
+        "time_total": total_time,
+        "co2": total_co2,
+        "price": total_price
     }
