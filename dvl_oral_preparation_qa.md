@@ -111,16 +111,16 @@ It helps simulate and compare different sharding strategies for balance.
 **Q: How is your package organized?**  
 It follows a clean modular structure:
 - `models.py`: defines `Field`, `Collection`, and `Database` classes.
-- `schema_parser.py`: reads a JSON Schema and builds a structure of Collection objects.
-- `size_calculator.py`: calculates document, collection, and database sizes.
+- `parsers/json_schema.py`: reads a JSON Schema and builds a structure of Collection objects.
+- `core/size_calc.py`: calculates document, collection, and database sizes.
 - `sharding_analyzer.py`: computes sharding distribution statistics.
 - `examples/`: contains example schemas, stats, and test scripts.
 
 **Q: How do these modules work together?**  
-`schema_parser` reads the schema and creates data structures. These are passed to `size_calculator`, which computes sizes, and optionally to `sharding_analyzer`, which simulates distribution. The `examples/test_script.py` file demonstrates how to chain all these steps.
+`json_schema` reads the schema and creates data structures. These are passed to `size_calc`, which computes sizes, and optionally to `sharding_analyzer`, which simulates distribution. The `examples/test_script.py` file demonstrates how to chain all these steps.
 
 **Q: What makes this design modular and reusable?**  
-Each module performs one job and can be imported independently. For example, another program could reuse only `size_calculator` to estimate storage without re-parsing the schema. This is good software design because it isolates concerns and supports future extension.
+Each module performs one job and can be imported independently. For example, another program could reuse only `size_calc` to estimate storage without re-parsing the schema. This is good software design because it isolates concerns and supports future extension.
 
 **Q: How would you extend the program?**  
 I could add functions to compute:
@@ -151,7 +151,7 @@ Schema design directly affects how fast queries can find and return data. A well
 
 ## 7. Tips for Oral Defense
 
-- **Connect concepts clearly:** When asked about a function, mention the file name and purpose (e.g., *"In `schema_parser.py`, I read the JSON Schema and create objects for each collection."*)
+- **Connect concepts clearly:** When asked about a function, mention the file name and purpose (e.g., *"In `parsers/json_schema.py`, I read the JSON Schema and create objects for each collection."*)
 - **Use transitions:** If a question jumps from theory to implementation, bridge them: *"That concept is reflected in my code by..."*
 - **When unsure:** Rephrase the question and show reasoning: *"If I understand correctly, you're asking about how sharding distributes data. In my program, I simulate that using..."*
 - **Emphasize automation:** *"The goal of my package was to automate manual calculations like document size and sharding distribution."*

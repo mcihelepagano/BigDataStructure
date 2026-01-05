@@ -1,24 +1,9 @@
-# app/operator_costs.py
+# app/cost_model/formulas.py
 
 from dataclasses import dataclass
 from typing import List
-from .size_calculator import TYPE_SIZES, OVERHEAD
-
-
-# ================================
-# CONSTANTS (MATCHING EXCEL)
-# ================================
-
-BANDWIDTH_Bps = 100_000_000      # 100 MB/s (1e8)
-RAM_Bps       = 25_000_000_000   # 25 GB/s (2.5e10)
-
-# Environmental impact factors (per GB)
-CO2_NETWORK_RATE = 0.0110  # kg CO2-eq / GB (bandwidth)
-CO2_RAM_RATE     = 0.0280  # kg CO2-eq / GB (RAM/CPU)
-
-PRICE_RATE = 0.011   # EUR per GB (network volume)
-
-INDEX_SIZE = 1_000_000   # 1 MB, as seen in Excel "local index"
+from ..core.size_calc import TYPE_SIZES, OVERHEAD
+from ..config import BANDWIDTH_Bps, RAM_Bps, CO2_NETWORK_RATE, CO2_RAM_RATE, PRICE_RATE, INDEX_SIZE
 
 
 # ================================
@@ -64,7 +49,7 @@ def size_of_fields(field_types: List[str]) -> int:
 
 
 def bytes_to_gb(x: float) -> float:
-    return x / (1024 ** 3)
+    return x / 1_000_000_000.0
 
 
 def compute_query_size(
@@ -124,23 +109,33 @@ def operator_cost_excel(
     
     ram_scanned_data = local_docs * selectivity * doc_size
     ram_local = (indexes_per_shard * INDEX_SIZE) + ram_scanned_data
-
-    # -------------------------
+# -------------------------
     # 4. TOTAL RAM (COST MODEL)
     # -------------------------
-    # Formula Excel: =IF(Sharding, Active*FullRAM + Inactive*IndexRAM)
-    # CORREZIONE: I server inattivi pagano solo l'indice.
     
     # Costo per i server che lavorano (Indice + Dati)
     active_ram_cost = servers_working * ram_local
     
-    # Costo per i server che non lavorano (Solo Indice)
+    # Costo per i server inattivi
+    # NUOVA LOGICA: Se s (server contattati) è 1, assumiamo accesso diretto (Smart Routing).
+    # I server inattivi NON vengono toccati/allocati per questa operazione.
+    # Se s > 1 (o se fosse una Join distribuita che riserva risorse), allora pagano l'indice.
+    
     inactive_count = max(servers_total - servers_working, 0)
-    inactive_ram_cost = inactive_count * (indexes_per_shard * INDEX_SIZE)
+    
+    if s == 1 and servers_total > 1:
+        # Caso Q1: Point Query su Sharding Key. 
+        # Routing intelligente: non paghiamo per i server inattivi.
+        inactive_ram_cost = 0 
+    else:
+        # Caso Standard / Scatter-Gather:
+        # Assumiamo che le risorse siano riservate o che la query tocchi potenzialmente il cluster.
+        # (Oppure mantieni la logica precedente se vuoi essere conservativo, 
+        # ma per Q1 Excel dice 0).
+        inactive_ram_cost = inactive_count * (indexes_per_shard * INDEX_SIZE)
     
     ram_volume_total = active_ram_cost + inactive_ram_cost
 
-    # Nota: ram_volume (per il calcolo del tempo singolo server) è ram_local
     ram_volume = ram_local
 
     # -------------------------

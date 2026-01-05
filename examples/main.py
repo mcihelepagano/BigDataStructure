@@ -3,10 +3,10 @@
 import os
 import json
 
-from app.schema_parser import parse_schema
-from app.size_calculator import doc_size, bytes_to_gb
+from app.parsers.json_schema import parse_schema
+from app.core.size_calc import doc_size, bytes_to_gb
 from app.sharding_analyzer import sharding_stats
-from app.operators import (
+from app.cost_model.operations import (
     filter_with_sharding,
     filter_without_sharding,
     nested_loop_with_sharding,
@@ -40,12 +40,11 @@ def load_environment(schema="schema_DB1.json", stats="stats_full.json"):
 def print_cost_block(label: str, cost, servers_working: int, servers_total: int):
     print(label)
     print(f"  Query size    = {cost.size_query} B")
-    print(f"  Msg size      = {cost.size_msg} B")
+    print(f"  Output size   = {cost.size_msg} B")
     print(f"  Result docs   = {cost.result_docs}")
-    print(f"  Result size   = {cost.result_size_bytes} B")
     print(f"  Network vol   = {cost.vol_network} B")
-    print(f"  RAM volume    = {cost.ram_volume} B (per working shard + output)")
-    print(f"  RAM total     = {cost.ram_volume_total} B (servers working = {servers_working}, total shards = {servers_total})")
+    print(f"  RAM volume    = {cost.ram_volume} B")
+    print(f"  RAM total     = {cost.ram_volume_total} B")
     print(f"  Total time    = {cost.time_total:.9f} s")
     print(f"  COO           = {cost.co2:.9f} kg")
     print(f"  Price         = {cost.price:.9f} EUR")
@@ -66,15 +65,25 @@ def print_join_block(label: str, res: dict, outer_label: str, inner_label: str):
     print(f"COO              = {res['co2']:.6f} kg")
     print(f"Price            = {res['price']:.6f} EUR")
     print(f"  Outer ({outer_label}):")
-    print(f"    result_docs  = {res['outer'].result_docs}")
-    print(f"    vol_network  = {res['outer'].vol_network} B")
-    print(f"    ram_total    = {res['outer'].ram_volume_total} B")
-    print(f"    time_total   = {res['outer'].time_total:.6f} s")
+    print(f"    Query size    = {res['outer'].size_query} B")
+    print(f"    Output size   = {res['outer'].size_msg} B")
+    print(f"    Result docs   = {res['outer'].result_docs}")
+    print(f"    Network vol   = {res['outer'].vol_network} B")
+    print(f"    RAM volume    = {res['outer'].ram_volume} B")
+    print(f"    RAM total     = {res['outer'].ram_volume_total} B")
+    print(f"    Total time    = {res['outer'].time_total:.6f} s")
+    print(f"    COO           = {res['outer'].co2:.6f} kg")
+    print(f"    Price         = {res['outer'].price:.6f} EUR")
     print(f"  Inner per iter ({inner_label}):")
-    print(f"    result_docs  = {res['inner_per_iteration'].result_docs}")
-    print(f"    vol_network  = {res['inner_per_iteration'].vol_network} B")
-    print(f"    ram_total    = {res['inner_per_iteration'].ram_volume_total} B")
-    print(f"    time_total   = {res['inner_per_iteration'].time_total:.6f} s")
+    print(f"    Query size    = {res['inner_per_iteration'].size_query} B")
+    print(f"    Output size   = {res['inner_per_iteration'].size_msg} B")
+    print(f"    Result docs   = {res['inner_per_iteration'].result_docs}")
+    print(f"    Network vol   = {res['inner_per_iteration'].vol_network} B")
+    print(f"    RAM volume    = {res['inner_per_iteration'].ram_volume} B")
+    print(f"    RAM total     = {res['inner_per_iteration'].ram_volume_total} B")
+    print(f"    Total time    = {res['inner_per_iteration'].time_total:.6f} s")
+    print(f"    COO           = {res['inner_per_iteration'].co2:.6f} kg")
+    print(f"    Price         = {res['inner_per_iteration'].price:.6f} EUR")
 
 
 # ============================================================
@@ -188,27 +197,49 @@ def joins_section(collections, stats):
     )
     print_join_block("\n>> J1 - NESTED LOOP JOIN WITHOUT SHARDING (Stock ⋈ Product ON IDP)", j1, "Stock", "Product")
 
-    print("\n>> J2 - NESTED LOOP JOIN WITH SHARDING (Stock ⋈ Product ON IDP) -- scenarios")
-    scenarios = [
-        ("Outer sharding IDW, Inner sharding IDP", "IDW", "IDP"),
-        ("Outer sharding IDP, Inner sharding IDP", "IDP", "IDP"),
-        ("Outer sharding IDW, Inner sharding brand", "IDW", "brand"),
-    ]
-    for label, outer_shard, inner_shard in scenarios:
-        print(f"\n-- {label} --")
-        j2 = nested_loop_with_sharding(
-            left=stock,
-            right=prod,
-            join_key="IDP",
-            distinct_values=distinct,
-            servers=servers,
-            outer_filter_keys=["IDW"],
-            outer_select_fields=["IDP", "quantity"],
-            inner_select_fields=["name"],
-            outer_sharding_key=outer_shard,
-            inner_sharding_key=inner_shard
-        )
-        print_join_block("", j2, "Stock", "Product")
+    # SCENARIO APPLE (Calcolato a parte)
+    # 50 prodotti Apple su 100.000 totali
+    apple_selectivity = 50 / 100_000  # 0.0005
+
+    print("\n>> J2 - NESTED LOOP JOIN (Apple Scenario)")
+    j2 = nested_loop_with_sharding(
+        left=prod,
+        right=stock,
+        join_key="IDP",
+        distinct_values=distinct,
+        servers=servers,
+        outer_filter_keys=["brand"],
+        outer_select_fields=["name", "price"],
+        inner_select_fields=["IDW", "quantity"],
+        outer_sharding_key="brand",  # Attenzione: per DB1 è IDP, per DB2 è Brand
+        inner_sharding_key="IDP",
+        
+        # QUI PASSI LA SELETTIVITÀ SPECIALE
+        outer_selectivity=apple_selectivity 
+    )
+    print_join_block("", j2, "Product", "Stock")
+
+    # print("\n>> J2 - NESTED LOOP JOIN WITH SHARDING (Stock ⋈ Product ON IDP) -- scenarios")
+    # scenarios = [
+    #     ("Outer sharding IDW, Inner sharding IDP", "IDW", "IDP"),
+    #     ("Outer sharding IDP, Inner sharding IDP", "IDP", "IDP"),
+    #     ("Outer sharding IDW, Inner sharding brand", "IDW", "brand"),
+    # ]
+    # for label, outer_shard, inner_shard in scenarios:
+    #     print(f"\n-- {label} --")
+    #     j2 = nested_loop_with_sharding(
+    #         left=stock,
+    #         right=prod,
+    #         join_key="IDP",
+    #         distinct_values=distinct,
+    #         servers=servers,
+    #         outer_filter_keys=["IDW"],
+    #         outer_select_fields=["IDP", "quantity"],
+    #         inner_select_fields=["name"],
+    #         outer_sharding_key=outer_shard,
+    #         inner_sharding_key=inner_shard
+    #     )
+    #     print_join_block("", j2, "Stock", "Product")
 
 
 # ============================================================
@@ -231,10 +262,10 @@ def main():
         print("\n========================")
         print("     HOMEWORK MENU")
         print("========================")
-        print("1 - Homework 2 (Sizes + Sharding)")
-        print("2 - Homework 3 (Operators)")
+        print("1 - Sizes and Sharding")
+        print("2 - Filtered Queries")
         print("3 - Join Queries (Nested Loop)")
-        print("4 - Homework 4 (Coming soon)")
+        print("4 - Agrregrable queries")
         print("0 - Exit")
 
         choice = input("\nChoose an option: ").strip()

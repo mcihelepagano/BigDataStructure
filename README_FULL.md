@@ -23,12 +23,12 @@ it works for any JSONSchema and any set of queries defined in terms of:
 BigDataStructure/
 │
 ├── app/
-│   ├── models.py              
-│   ├── schema_parser.py       
-│   ├── size_calculator.py     
+│   ├── core/models.py              
+│   ├── parsers/json_schema.py       
+│   ├── core/size_calc.py     
 │   ├── sharding_analyzer.py   
-│   ├── operator_costs.py      
-│   ├── operators.py           
+│   ├── cost_model/formulas.py      
+│   ├── cost_model/operations.py           
 │
 ├── examples/
 │   ├── schema_DB1.json
@@ -44,14 +44,14 @@ BigDataStructure/
 
 ---
 
-# 1. JSON Schema Parsing (`schema_parser.py`)
+# 1. JSON Schema Parsing (`parsers/json_schema.py`)
 
 The parser converts a JSONSchema into internal Python objects (`Collection`, `Field`).  
 It supports nested objects, arrays, and custom type sizes (integer, string, longstring, date).
 
 ---
 
-# 2. Size Calculation (`size_calculator.py`)
+# 2. Size Calculation (`core/size_calc.py`)
 
 Document size uses the professor’s formula:
 
@@ -74,7 +74,7 @@ Used to evaluate whether a sharding key is well balanced.
 
 ---
 
-# 4. Cost Model (`operator_costs.py`)
+# 4. Cost Model (`cost_model/formulas.py`)
 
 Implements:
 
@@ -90,7 +90,7 @@ Using the professor’s constants (100 MB/s, 25 GB/s, etc.).
 
 ---
 
-# 5. Operators (`operators.py`)
+# 5. Operators (`cost_model/operations.py`)
 
 Implements:
 

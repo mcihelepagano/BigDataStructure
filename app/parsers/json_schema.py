@@ -1,9 +1,9 @@
-# app/schema_parser.py
+# app/parsers/json_schema.py
 
 import json
 from typing import Dict, List
-from .models import Field, Collection, Database
-from .size_calculator import doc_size
+from ..core.models import Field, Collection, Database
+from ..core.size_calc import doc_size
 
 
 def _parse_properties(props: Dict, path: str, array_hints: Dict[str, int]) -> List[Field]:

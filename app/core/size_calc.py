@@ -26,6 +26,8 @@ def value_size(field):
 
     # array
     if field.field_type == "array":
+        if not field.subfields:
+            return 0
         item = field.subfields[0]
         return field.avg_items * value_size(item)
 
@@ -38,7 +40,7 @@ def key_count(field):
     Count JSON keys contributing overhead:
     - primitive: 1 key
     - object: 1 for the object + child keys
-    - array: 1 for the array (keys are NOT repeated for elements!)
+    - array: 1 for the array + child keys (counted ONCE, not multiplied by length)
     """
     # primitive
     if field.field_type in TYPE_SIZES:
@@ -50,10 +52,13 @@ def key_count(field):
 
     # array
     if field.field_type == "array":
-        return 1     # arrays DO NOT multiply keys of elements
+        # CORREZIONE: Scendiamo ricorsivamente nel tipo contenuto nell'array
+        # per contare le sue chiavi (es. ID, Qty) almeno una volta.
+        if field.subfields:
+            return 1 + key_count(field.subfields[0])
+        return 1
 
     return 1
-
 
 
 def doc_size(collection):
@@ -62,6 +67,8 @@ def doc_size(collection):
     doc_size = sum(values) + sum(keys * 12)
     """
     total_value = sum(value_size(f) for f in collection.fields)
+    # Nota: qui assumiamo che collection.fields sia una lista di campi 'root'.
+    # key_count restituirà 1 per ogni campo root + i suoi figli.
     total_keys = sum(key_count(f) for f in collection.fields)
     return total_value + total_keys * OVERHEAD
 
@@ -75,4 +82,4 @@ def db_size(database):
 
 
 def bytes_to_gb(nbytes):
-    return nbytes / (10 ** 9)
+    return nbytes / (10 ** 9) # Corretto (Base 10)

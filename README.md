@@ -10,9 +10,9 @@ It was developed for the **Big Data Structure** course at ESILV to explore data 
 ###  Structure
 | File | Description |
 |------|--------------|
-| **models.py** | Data structures (`Field`, `Collection`, `Database`). Arrays carry an `avg_items` hint. |
-| **schema_parser.py** | Recursively parses schemas (objects/arrays) with optional array hints. |
-| **size_calculator.py** | Implements all document and collection size computation logic, including nested objects/arrays. |
+| **core/models.py** | Data structures (`Field`, `Collection`, `Database`). Arrays carry an `avg_items` hint. |
+| **parsers/json_schema.py** | Recursively parses schemas (objects/arrays) with optional array hints. |
+| **core/size_calc.py** | Implements all document and collection size computation logic, including nested objects/arrays. |
 | **sharding_analyzer.py** | Computes document and key distribution across servers. |
 | **examples/** | Schemas for DB1–DB5, stats files, runnable script. |
 

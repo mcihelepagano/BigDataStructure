@@ -2,8 +2,8 @@ import argparse
 import json
 import os
 
-from app.size_calculator import doc_size, collection_size, bytes_to_gb
-from app.schema_parser import parse_schema
+from app.core.size_calc import doc_size, collection_size, bytes_to_gb
+from app.parsers.json_schema import parse_schema
 from app.sharding_analyzer import sharding_stats
 
 BASE = os.path.dirname(__file__)
