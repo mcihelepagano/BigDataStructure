@@ -9,8 +9,8 @@ from .size_calculator import TYPE_SIZES, OVERHEAD
 # CONSTANTS (MATCHING EXCEL)
 # ================================
 
-BANDWIDTH_Bps = 100 * 1024 * 1024        # 100 MB/s
-RAM_Bps       = 25 * 1024 * 1024 * 1024  # 25 GB/s
+BANDWIDTH_Bps = 100_000_000      # 100 MB/s (1e8)
+RAM_Bps       = 25_000_000_000   # 25 GB/s (2.5e10)
 
 # Environmental impact factors (per GB)
 CO2_NETWORK_RATE = 0.0110  # kg CO2-eq / GB (bandwidth)
@@ -92,85 +92,74 @@ def compute_query_size(
 # ================================================================
 
 def operator_cost_excel(
-    s: int,                     # number of servers contacted
-    result_docs: int,           # number of matching docs
+    s: int,                 # number of servers contacted
+    result_docs: int,       # number of matching docs
     filter_types: List[str],
     projection_types: List[str],
-    local_docs: int,            # docs on each server (collection.doc_count / servers)
+    local_docs: int,        # docs on each server
     selectivity: float,
-    doc_size: int,              # document size (HW2)
-    servers_working: int = 1,   # P: working shards
-    servers_total: int = 1,     # F: total shards
-    indexes_per_shard: int = 1  # K: indexes per shard
+    doc_size: int,          # document size
+    servers_working: int = 1,
+    servers_total: int = 1,
+    indexes_per_shard: int = 1
 ) -> CostOutput:
 
     # -------------------------
     # 1. QUERY + OUTPUT SIZES
     # -------------------------
-    size_query = compute_query_size(
-        filter_types=filter_types,
-        projection_types=projection_types
-    )
-
+    size_query = compute_query_size(filter_types, projection_types)
     size_msg   = size_of_fields(projection_types)
 
     # -------------------------
-    # 2. NETWORK VOLUME (Excel)
-    #    NetworkVol = SⅧS + resⅥS
+    # 2. NETWORK VOLUME
     # -------------------------
     vol_network = s * size_query + result_docs * size_msg
 
     # -------------------------
-    # 3. LOCAL RAM ACCESSED PER SERVER
-    #
-    # Excel/slide formula (per server):
-    # vol_RAM(q, n) = index(q) + sel(att) * coll_q,n * size_doc(q)
+    # 3. LOCAL RAM ACCESSED (PER WORKING SERVER)
     # -------------------------
-    ram_local_scan = local_docs * selectivity * doc_size
-    ram_local = max(INDEX_SIZE, ram_local_scan)
+    # Formula Excel: Indice + (Docs Letti * Dimensione Doc)
+    # CORREZIONE: Si usa la SOMMA (+), non MAX().
+    # CORREZIONE: La RAM di output (scrittura) NON viene contata qui.
+    
+    ram_scanned_data = local_docs * selectivity * doc_size
+    ram_local = (indexes_per_shard * INDEX_SIZE) + ram_scanned_data
 
     # -------------------------
-    # 4. RAM OUTPUT COST
-    #
-    # Excel term: K * output_size
+    # 4. TOTAL RAM (COST MODEL)
     # -------------------------
-    ram_output = result_docs * size_msg
+    # Formula Excel: =IF(Sharding, Active*FullRAM + Inactive*IndexRAM)
+    # CORREZIONE: I server inattivi pagano solo l'indice.
+    
+    # Costo per i server che lavorano (Indice + Dati)
+    active_ram_cost = servers_working * ram_local
+    
+    # Costo per i server che non lavorano (Solo Indice)
+    inactive_count = max(servers_total - servers_working, 0)
+    inactive_ram_cost = inactive_count * (indexes_per_shard * INDEX_SIZE)
+    
+    ram_volume_total = active_ram_cost + inactive_ram_cost
+
+    # Nota: ram_volume (per il calcolo del tempo singolo server) è ram_local
+    ram_volume = ram_local
 
     # -------------------------
-    # 5. TOTAL RAM (piecewise, slide logic)
-    # sh = servers_total, w = servers_working, idx = indexes_per_shard, S = INDEX_SIZE
-    # ptr·doc ~ ram_local_scan (data touched per working shard)
-    # sh = 1:     RAM = idx*S + ptr*doc + ram_output
-    # sh = 1000:  RAM = w*ram_local + (sh-w)*idx*S + ram_output
-    ram_volume = ram_local + ram_output  # per working shard (ram + output)
-    if servers_total == 1:
-        ram_volume_total = (
-            indexes_per_shard * INDEX_SIZE
-            + ram_local_scan
-            + ram_output
-        )
-    else:
-        inactive_shards = max(servers_total - servers_working, 0)
-        ram_volume_total = (
-            servers_working * ram_local
-            + inactive_shards * indexes_per_shard * INDEX_SIZE
-            + ram_output
-        )
-
-    # -------------------------
-    # 6. TIME
+    # 5. TIME (ZERO-COPY LOGIC)
     # -------------------------
     time_network = vol_network / BANDWIDTH_Bps
-    time_ram     = ram_volume / RAM_Bps
+    
+    # CORREZIONE: Il tempo RAM si basa solo su ciò che viene LETTO (ram_local).
+    # La scrittura dell'output è considerata zero-copy/streaming verso la rete.
+    time_ram     = ram_local / RAM_Bps 
+    
     time_total   = time_network + time_ram
 
     # -------------------------
-    # 7. CO2 & PRICE
-    #
-    # CO2_network = vol_network * CO2_NETWORK_RATE
-    # CO2_RAM     = ram_volume * CO2_RAM_RATE
-    # total CO2   = CO2_network + CO2_RAM
+    # 6. CO2 & PRICE
     # -------------------------
+    # Usiamo le funzioni helper per convertire in GB decimali (o binari se preferisci mantenere coerenza interna,
+    # ma Excel usa conversioni dirette sui volumi calcolati).
+    
     ram_gb = bytes_to_gb(ram_volume_total)
     net_gb = bytes_to_gb(vol_network)
 
@@ -178,8 +167,7 @@ def operator_cost_excel(
     co2_ram     = ram_gb * CO2_RAM_RATE
     co2         = co2_network + co2_ram
 
-    # Price based only on network volume (bytes → GB)
-    price  = bytes_to_gb(vol_network) * PRICE_RATE
+    price = net_gb * PRICE_RATE
 
     return CostOutput(
         result_docs=result_docs,

@@ -281,6 +281,14 @@ def nested_loop_without_sharding(
         indexes_per_shard=1
     )
 
+    # Alternative RAM volume (index + pointers per working server * doc_size)
+    from .operator_costs import INDEX_SIZE
+    outer_local_docs = left.doc_count / servers
+    inner_local_docs = right.doc_count / servers
+    alt_ram_outer = servers * (INDEX_SIZE + outer_local_docs * outer_sel * left.doc_size)
+    alt_ram_inner = servers * (INDEX_SIZE + inner_local_docs * inner_sel * right.doc_size) * join_result_docs
+    alt_ram_total = alt_ram_outer + alt_ram_inner + join_result_docs * inner_cost.size_msg
+
     total_vol_network = outer_cost.vol_network + inner_cost.vol_network * join_result_docs
     total_ram_volume = outer_cost.ram_volume_total + inner_cost.ram_volume_total * join_result_docs
     total_time = outer_cost.time_total + inner_cost.time_total * join_result_docs
@@ -296,6 +304,9 @@ def nested_loop_without_sharding(
         "inner_per_iteration": inner_cost,
         "vol_network": total_vol_network,
         "ram_volume": total_ram_volume,
+        "ram_volume_alt": alt_ram_total,
+        "ram_volume_alt_outer": alt_ram_outer,
+        "ram_volume_alt_inner": alt_ram_inner,
         "time_total": total_time,
         "co2": total_co2,
         "price": total_price
@@ -311,7 +322,8 @@ def nested_loop_with_sharding(
     outer_filter_keys: Optional[List[str]] = None,
     outer_select_fields: Optional[List[str]] = None,
     inner_select_fields: Optional[List[str]] = None,
-    sharding_key: Optional[str] = None
+    outer_sharding_key: Optional[str] = None,
+    inner_sharding_key: Optional[str] = None
 ) -> Dict:
     """
     Sharded nested loop: same outer/inner cost splitting, but assume perfect sharding on join_key
@@ -335,36 +347,45 @@ def nested_loop_with_sharding(
     else:
         join_result_docs = 0.1 * outer_result_docs * right.doc_count
 
-    # servers touched based on sharding key (like filter_with_sharding)
-    sharding_matches_outer = sharding_key and outer_filter_keys and sharding_key in outer_filter_keys
-    sharding_matches_join  = sharding_key and sharding_key == join_key
-    S = 1 if (sharding_matches_outer or sharding_matches_join) else servers
+    # servers touched based on sharding keys
+    outer_match = outer_sharding_key and outer_filter_keys and outer_sharding_key in outer_filter_keys
+    inner_match = inner_sharding_key and inner_sharding_key == join_key
+    S_outer = 1 if outer_match else servers
+    S_inner = 1 if inner_match else servers
 
     outer_cost = operator_cost_excel(
-        s=S,
+        s=S_outer,
         result_docs=outer_result_docs,
         filter_types=resolve_field_types(left, outer_filter_keys) if outer_filter_keys else [],
         projection_types=resolve_field_types(left, outer_select_fields) if outer_select_fields else [],
         local_docs=left.doc_count / servers,
         selectivity=outer_sel,
         doc_size=left.doc_size,
-        servers_working=S,
-        servers_total=S,
+        servers_working=S_outer,
+        servers_total=S_outer,
         indexes_per_shard=1
     )
 
     inner_cost = operator_cost_excel(
-        s=S,
+        s=S_inner,
         result_docs=1,
         filter_types=resolve_field_types(right, [join_key]),
         projection_types=resolve_field_types(right, inner_select_fields) if inner_select_fields else [],
         local_docs=right.doc_count / servers,
         selectivity=inner_sel,
         doc_size=right.doc_size,
-        servers_working=S,
-        servers_total=S,
+        servers_working=S_inner,
+        servers_total=S_inner,
         indexes_per_shard=1
     )
+
+    # Alternative RAM volume (index + pointers per working server * doc_size)
+    from .operator_costs import INDEX_SIZE
+    outer_local_docs = left.doc_count / servers
+    inner_local_docs = right.doc_count / servers
+    alt_ram_outer = S_outer * (INDEX_SIZE + outer_local_docs * outer_sel * left.doc_size)
+    alt_ram_inner = S_inner * (INDEX_SIZE + inner_local_docs * inner_sel * right.doc_size) * join_result_docs
+    alt_ram_total = alt_ram_outer + alt_ram_inner + join_result_docs * inner_cost.size_msg
 
     total_vol_network = outer_cost.vol_network + inner_cost.vol_network * join_result_docs
     total_ram_volume = outer_cost.ram_volume_total + inner_cost.ram_volume_total * join_result_docs
@@ -378,6 +399,9 @@ def nested_loop_with_sharding(
         "inner_per_iteration": inner_cost,
         "vol_network": total_vol_network,
         "ram_volume": total_ram_volume,
+        "ram_volume_alt": alt_ram_total,
+        "ram_volume_alt_outer": alt_ram_outer,
+        "ram_volume_alt_inner": alt_ram_inner,
         "time_total": total_time,
         "co2": total_co2,
         "price": total_price
